@@ -6,6 +6,7 @@
     <title>声波高速数据接收端 (QPSK-64k)</title>
     
     <script>
+        // 1. 全局错误捕捉
         window._startupErrors = [];
         window.onerror = function(msg, url, line) {
             window._startupErrors.push('💥 顶层报错: ' + msg + ' (行:' + line + ')');
@@ -13,6 +14,18 @@
         window.addEventListener('unhandledrejection', function(event) {
             window._startupErrors.push('💥 异步报错: ' + (event.reason ? (event.reason.message || event.reason) : "未知错误"));
         });
+
+        // 2. 终极补丁：必须在加载官方库之前定义 Module，强制拦截 .mem 文件的跨域寻址！
+        const CDN_PATH = "https://cdn.jsdelivr.net/gh/quiet/quiet-js@master/";
+        window.Module = {
+            locateFile: function(path) {
+                // 强制所有二进制依赖文件从 CDN 原厂加载，杜绝本地 404 导致的引擎崩溃
+                if (path.endsWith('.mem') || path.endsWith('.wasm')) {
+                    return CDN_PATH + path;
+                }
+                return path;
+            }
+        };
     </script>
 
     <!-- 引用官方 CDN 文件 -->
@@ -34,7 +47,7 @@
 <body>
 
 <div class="card">
-    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:purple;">(终极防崩版)</span></h2>
+    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:green;">(寻址修复定稿版)</span></h2>
     <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
@@ -64,26 +77,18 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    window.onerror = function(msg, url, line) {
-        log('<span style="color:red; font-weight:bold;">💥 致命报错: ' + msg + ' (行:' + line + ')</span>');
-        btn.disabled = false;
-        btn.innerText = "环境报错，请重试";
-    };
-
     // ==========================================
-    // 绝对防御：手动注满所有可能缺失的 Emscripten 底层依赖
+    // 强制方法注入：补充古董 WebAssembly 引擎丢失的底层组件
     // ==========================================
     function injectEmscriptenPatches() {
-        log("🔧 正在为底层引擎执行全套装甲修复...");
-        window.Module = window.Module || {};
+        if (!window.Module) window.Module = {};
         
-        // 补丁 1：修复 ccall 丢失问题
         if (typeof window.ccall === 'function' && !window.Module.ccall) {
             window.Module.ccall = window.ccall;
         }
 
-        // 补丁 2：修复 intArrayFromString 丢失问题（你刚才遇到的报错就是缺这个）
         if (!window.Module.intArrayFromString) {
+            log("🔧 正在注入字符串转换核心补丁...");
             window.Module.intArrayFromString = function(stringy) {
                 var intArray = [];
                 for (var i = 0; i < stringy.length; ++i) {
@@ -224,40 +229,37 @@
     }
 
     function initApp() {
-        log("✅ 页面结构加载完毕...");
+        log("✅ 页面结构就绪...");
         
         if (window._startupErrors && window._startupErrors.length > 0) {
             window._startupErrors.forEach(err => log('<span style="color:red">' + err + '</span>'));
         }
 
-        // --- 核心防崩溃注入 ---
         injectEmscriptenPatches();
 
         if (typeof Quiet === 'undefined') {
-            log('<span style="color:red">❌ Quiet.js 核心库未找到！请检查网络是否能够访问 jsDelivr CDN。</span>');
+            log('<span style="color:red">❌ 核心库未找到！请检查网络是否能访问 CDN。</span>');
             btn.innerText = "网络依赖加载失败";
             return;
         }
 
         btn.disabled = true;
-        btn.innerText = "正在通过 CDN 下载环境配置...";
-        
-        const cdnPath = "https://cdn.jsdelivr.net/gh/quiet/quiet-js@master/";
+        btn.innerText = "正在拉取核心环境配置...";
 
         try {
             Quiet.init({
-                profilesPrefix: cdnPath,
-                memoryInitializerPrefix: cdnPath,
-                libfecPrefix: cdnPath
+                profilesPrefix: CDN_PATH,
+                memoryInitializerPrefix: CDN_PATH,
+                libfecPrefix: CDN_PATH
             });
         } catch (e) {
-            log('<span style="color:red">💥 云端环境配置报错: ' + e + '</span>');
+            log('<span style="color:red">💥 环境配置报错: ' + e + '</span>');
             btn.innerText = "环境初始化失败";
             return;
         }
 
         Quiet.addReadyCallback(() => {
-            log("✅ WebAssembly 引擎已成功挂载，等待点击。");
+            log("✅ 解码内存已分配完毕，等待启动指令。");
             btn.disabled = false;
             btn.innerText = "允许麦克风并启动接收";
         });
@@ -271,7 +273,7 @@
 
     async function startListening() {
         btn.disabled = true;
-        btn.innerText = "1/2 正在请求设备权限...";
+        btn.innerText = "正在请求设备权限...";
         log("▶️ 1. 尝试直接调用 WebRTC 获取麦克风...");
 
         try {
@@ -286,28 +288,37 @@
             window._tempMicStream = stream;
             log('<span style="color:green">✅ 2. 系统权限获取成功，设备麦克风已被激活。</span>');
             
-            // --- 双重保险：启动前再次确认底层依赖 ---
             injectEmscriptenPatches();
 
-            btn.innerText = "2/2 正在启动声波解码引擎...";
-            log("▶️ 3. 正在启动 Quiet.js 接收器...");
+            btn.innerText = "正在启动声波解码引擎...";
+            log("▶️ 3. 正在将音频流挂载至 Quiet.js 接收器...");
 
             Quiet.receiver({
                 profile: 'cable-64k',
                 onReceive: onReceive,
                 onCreateFail: (err) => { 
-                    log('<span style="color:red">❌ 4. 接收器创建失败: ' + err + '</span>'); 
+                    log('<span style="color:red">❌ 4. 接收器挂载失败: ' + err + '</span>'); 
                     btn.disabled = false;
                     btn.innerText = "重新尝试";
                 },
                 onReceiveFail: (num) => { }
             });
             
-            log('<span style="color:green; font-weight:bold;">✅ 4. 引擎启动成功！正在全功率监听声波。</span>');
+            log('<span style="color:green; font-weight:bold;">🟢 引擎全线启动成功！正在监听环境中的声波数据。</span>');
             btn.innerText = "🟢 接收状态：正在监听中";
 
         } catch (err) {
-            log('<span style="color:red; font-weight:bold;">❌ 运行期间抛出异常: ' + err.name + " -> " + err.message + '</span>');
+            // 防御式报错解析：精确解析出 Emscripten 抛出的纯字符串错误
+            let errMsg = "未知异常";
+            if (err instanceof Error) {
+                errMsg = err.name + " -> " + err.message;
+            } else if (typeof err === 'string') {
+                errMsg = "底层崩溃: " + err; // 现在终于能看清字符串里的真面目了
+            } else {
+                try { errMsg = JSON.stringify(err); } catch(e) { errMsg = String(err); }
+            }
+            
+            log('<span style="color:red; font-weight:bold;">❌ 运行期间抛出异常: ' + errMsg + '</span>');
             btn.disabled = false;
             btn.innerText = "权限拒绝或异常，点击重试";
         }
