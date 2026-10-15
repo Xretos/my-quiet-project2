@@ -15,23 +15,20 @@
             window._startupErrors.push('💥 异步报错: ' + (event.reason ? (event.reason.message || event.reason) : "未知错误"));
         });
 
-        // 2. 切换为正式发布的 NPM 稳定版 CDN，避开官方 GitHub 主分支的损坏代码
-        const CDN_PATH = "https://cdn.jsdelivr.net/npm/quietjs/";
-        
+        // 2. 拦截底层引擎寻址，强制指向官方 Demo 站点的二进制内存文件
         window.Module = {
             locateFile: function(path) {
-                // 强制所有二进制依赖文件从 NPM 稳定版 CDN 加载
-                if (path.endsWith('.mem') || path.endsWith('.wasm') || path.endsWith('.json')) {
-                    return CDN_PATH + path;
+                if (path.endsWith('.mem') || path.endsWith('.wasm')) {
+                    return "https://quiet.github.io/quiet-js/js/" + path;
                 }
                 return path;
             }
         };
     </script>
 
-    <!-- 引用 NPM 稳定版文件 -->
-    <script src="https://cdn.jsdelivr.net/npm/quietjs/quiet-emscripten.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/quietjs/quiet.js"></script>
+    <!-- 直接引用官方稳定版 Demo 站点上已经编译好的核心库 -->
+    <script src="https://quiet.github.io/quiet-js/js/quiet-emscripten.js"></script>
+    <script src="https://quiet.github.io/quiet-js/js/quiet.js"></script>
     
     <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
@@ -48,7 +45,7 @@
 <body>
 
 <div class="card">
-    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:green;">(NPM稳定终极版)</span></h2>
+    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:green;">(官方镜像终极版)</span></h2>
     <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
@@ -239,7 +236,7 @@
         injectEmscriptenPatches();
 
         if (typeof Quiet === 'undefined') {
-            log('<span style="color:red">❌ 核心库未找到！请检查网络是否能访问 CDN。</span>');
+            log('<span style="color:red">❌ 核心库未找到！请检查网络是否能访问 quiet.github.io。</span>');
             btn.innerText = "网络依赖加载失败";
             return;
         }
@@ -248,10 +245,11 @@
         btn.innerText = "正在拉取核心环境配置...";
 
         try {
+            // 直接指向官方稳定版 Demo 的配置文件目录
             Quiet.init({
-                profilesPrefix: CDN_PATH,
-                memoryInitializerPrefix: CDN_PATH,
-                libfecPrefix: CDN_PATH
+                profilesPrefix: "https://quiet.github.io/quiet-js/",
+                memoryInitializerPrefix: "https://quiet.github.io/quiet-js/js/",
+                libfecPrefix: "https://quiet.github.io/quiet-js/js/"
             });
         } catch (e) {
             log('<span style="color:red">💥 环境配置报错: ' + e + '</span>');
