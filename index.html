@@ -13,7 +13,7 @@
         body { font-family: -apple-system, sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
         .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); max-width: 500px; margin: 0 auto; }
         button { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; width: 100%; cursor: pointer; }
-        button:disabled { background: #ccc; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
         .stats { display: flex; justify-content: space-between; margin-top: 20px; font-size: 14px; color: #666; }
         .progress-bar { height: 10px; background: #e9ecef; border-radius: 5px; margin-top: 15px; overflow: hidden; }
         .progress-fill { height: 100%; background: #28a745; width: 0%; transition: width 0.2s; }
@@ -24,7 +24,8 @@
 
 <div class="card">
     <h2 style="margin-top: 0;">声波接收终端</h2>
-    <button id="btnStart" onclick="startListening()">允许麦克风并启动接收</button>
+    <!-- 按钮初始设置为禁用状态，等待引擎加载 -->
+    <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
         <span id="txtSpeed">速率: 0 kbps</span>
@@ -40,6 +41,7 @@
 </div>
 
 <script>
+    // --- 内部轻量级 CRC32 实现 ---
     const crc32Table = new Uint32Array(256);
     for(let i=0; i<256; i++){
         let c = i;
@@ -54,6 +56,7 @@
         return (crc ^ 0xFFFFFFFF) >>> 0;
     }
 
+    // --- 状态机与全局变量 ---
     const STATE_WAIT_HEADER = 0;
     const STATE_RECEIVING = 1;
     let currentState = STATE_WAIT_HEADER;
@@ -65,6 +68,7 @@
     let byteCounter = 0;
     let lastTime = Date.now();
 
+    // UI 元素
     const btn = document.getElementById('btnStart');
     const logEl = document.getElementById('log');
     const txtSpeed = document.getElementById('txtSpeed');
@@ -77,6 +81,7 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
+    // --- 速率计算 ---
     setInterval(() => {
         if(currentState === STATE_RECEIVING) {
             let now = Date.now();
@@ -88,6 +93,7 @@
         }
     }, 1000);
 
+    // --- Quiet.js 接收处理函数 ---
     function onReceive(recvPayload) {
         let buffer = recvPayload.buffer;
         let dataView = new DataView(buffer);
@@ -163,46 +169,56 @@
         URL.revokeObjectURL(url);
     }
 
-    function startListening() {
-        // 增加错误捕获，防止依赖丢失时无反馈
+    // --- 1. 页面一加载，立刻在后台初始化引擎，但不调起麦克风 ---
+    document.addEventListener("DOMContentLoaded", () => {
         if (typeof Quiet === 'undefined') {
-            alert("Quiet.js 库未加载！请确保依赖文件已下载并在同一目录下。");
+            log("❌ Quiet.js 库未加载，请确保 4 个核心文件都已上传。");
             return;
         }
 
         btn.disabled = true;
-        btn.innerText = "正在初始化环境...";
+        btn.innerText = "正在下载引擎依赖(约1MB)...";
         
         try {
             Quiet.init({
-                profilesPrefix: "./",            // 改为相对路径
-                memoryInitializerPrefix: "./",   // 改为相对路径
-                libfecPrefix: "./"               // 改为相对路径
+                profilesPrefix: "./",
+                memoryInitializerPrefix: "./",
+                libfecPrefix: "./"
             });
         } catch (e) {
-            log("初始化报错: " + e);
-            btn.disabled = false;
-            btn.innerText = "允许麦克风并启动接收";
+            log("引擎初始化报错: " + e);
+            btn.innerText = "初始化失败";
             return;
         }
 
         Quiet.addReadyCallback(() => {
-            log("引擎就绪，正在请求麦克风权限...");
-            
-            Quiet.receiver({
-                profile: 'cable-64k',
-                onReceive: onReceive,
-                onCreateFail: (err) => { 
-                    log('麦克风初始化失败: ' + err); 
-                    alert("麦克风启动失败。请确认：\n1. 网址是 HTTPS\n2. 浏览器已授权麦克风权限");
-                    btn.disabled = false;
-                    btn.innerText = "重新尝试";
-                },
-                onReceiveFail: (num) => { }
-            });
-            
-            btn.innerText = "接收状态：监听中";
+            log("引擎加载完毕，等待用户授权。");
+            // 依赖下载并初始化完成后，才将按钮变为可点击状态
+            btn.disabled = false;
+            btn.innerText = "允许麦克风并启动接收";
         });
+    });
+
+    // --- 2. 用户点击按钮时，没有任何延迟，直接同步请求麦克风 ---
+    function startListening() {
+        btn.disabled = true;
+        btn.innerText = "正在请求麦克风权限...";
+        log("正在调起系统麦克风...");
+        
+        Quiet.receiver({
+            profile: 'cable-64k',
+            onReceive: onReceive,
+            onCreateFail: (err) => { 
+                log('麦克风被拒绝或失败: ' + err); 
+                alert("麦克风启动失败！\n原因可能是：\n1. 浏览器设置中禁用了此网页的权限\n2. 在微信/QQ等内置浏览器中打开（请改用手机自带 Safari/Chrome 打开）");
+                btn.disabled = false;
+                btn.innerText = "重新尝试";
+            },
+            onReceiveFail: (num) => { }
+        });
+        
+        // 执行到这里说明麦克风 API 已成功发起请求
+        btn.innerText = "接收状态：监听中 (绿点常亮)";
     }
 </script>
 </body>
