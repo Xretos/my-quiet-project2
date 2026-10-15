@@ -241,7 +241,8 @@
             // 将授权的音频流保存在全局对象中，防止被垃圾回收导致后续 Quiet 拿不到权限
             window._tempMicStream = stream;
             
-            log("<span style="color:green">✅ 2. 浏览器麦克风权限已被系统批准！系统绿灯应亮起。</span>");
+            // 已修复单双引号嵌套错误
+            log('<span style="color:green">✅ 2. 浏览器麦克风权限已被系统批准！系统绿灯应亮起。</span>');
             btn.innerText = "2/2 正在启动声波引擎...";
             log("▶️ 3. 正在启动 Quiet.js 接收器...");
 
