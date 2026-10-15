@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>声波高速数据接收端 (QPSK-64k)</title>
     
-    <!-- 顶层错误捕获 -->
     <script>
         window._startupErrors = [];
         window.onerror = function(msg, url, line) {
@@ -16,7 +15,7 @@
         });
     </script>
 
-    <!-- 直接从官方 CDN 获取纯净版依赖，杜绝本地文件损坏问题 -->
+    <!-- 引用官方 CDN 文件 -->
     <script src="https://cdn.jsdelivr.net/gh/quiet/quiet-js@master/quiet-emscripten.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/quiet/quiet-js@master/quiet.js"></script>
     
@@ -35,7 +34,7 @@
 <body>
 
 <div class="card">
-    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:green;">(CDN纯净版)</span></h2>
+    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:purple;">(终极防崩版)</span></h2>
     <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
@@ -52,7 +51,6 @@
 </div>
 
 <script>
-    // --- UI与日志工具 ---
     const btn = document.getElementById('btnStart');
     const logEl = document.getElementById('log');
     const txtSpeed = document.getElementById('txtSpeed');
@@ -66,14 +64,54 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // --- 页面运行时错误捕获 ---
     window.onerror = function(msg, url, line) {
         log('<span style="color:red; font-weight:bold;">💥 致命报错: ' + msg + ' (行:' + line + ')</span>');
         btn.disabled = false;
         btn.innerText = "环境报错，请重试";
     };
 
-    // --- CRC32 校验实现 ---
+    // ==========================================
+    // 绝对防御：手动注满所有可能缺失的 Emscripten 底层依赖
+    // ==========================================
+    function injectEmscriptenPatches() {
+        log("🔧 正在为底层引擎执行全套装甲修复...");
+        window.Module = window.Module || {};
+        
+        // 补丁 1：修复 ccall 丢失问题
+        if (typeof window.ccall === 'function' && !window.Module.ccall) {
+            window.Module.ccall = window.ccall;
+        }
+
+        // 补丁 2：修复 intArrayFromString 丢失问题（你刚才遇到的报错就是缺这个）
+        if (!window.Module.intArrayFromString) {
+            window.Module.intArrayFromString = function(stringy) {
+                var intArray = [];
+                for (var i = 0; i < stringy.length; ++i) {
+                    var charCode = stringy.charCodeAt(i);
+                    if (charCode < 0x80) {
+                        intArray.push(charCode);
+                    } else if (charCode < 0x800) {
+                        intArray.push(0xc0 | (charCode >> 6));
+                        intArray.push(0x80 | (charCode & 0x3f));
+                    } else if (charCode < 0xd800 || charCode >= 0xe000) {
+                        intArray.push(0xe0 | (charCode >> 12));
+                        intArray.push(0x80 | ((charCode >> 6) & 0x3f));
+                        intArray.push(0x80 | (charCode & 0x3f));
+                    } else {
+                        i++;
+                        charCode = 0x10000 + (((charCode & 0x3ff) << 10) | (stringy.charCodeAt(i) & 0x3ff));
+                        intArray.push(0xf0 | (charCode >> 18));
+                        intArray.push(0x80 | ((charCode >> 12) & 0x3f));
+                        intArray.push(0x80 | ((charCode >> 6) & 0x3f));
+                        intArray.push(0x80 | (charCode & 0x3f));
+                    }
+                }
+                intArray.push(0);
+                return intArray;
+            };
+        }
+    }
+
     const crc32Table = new Uint32Array(256);
     for(let i=0; i<256; i++){
         let c = i;
@@ -88,7 +126,6 @@
         return (crc ^ 0xFFFFFFFF) >>> 0;
     }
 
-    // --- 状态与变量 ---
     const STATE_WAIT_HEADER = 0;
     const STATE_RECEIVING = 1;
     let currentState = STATE_WAIT_HEADER;
@@ -99,7 +136,6 @@
     let byteCounter = 0;
     let lastTime = Date.now();
 
-    // --- 速率统计 ---
     setInterval(() => {
         if(currentState === STATE_RECEIVING) {
             let now = Date.now();
@@ -113,7 +149,6 @@
         }
     }, 1000);
 
-    // --- 数据接收回调 ---
     function onReceive(recvPayload) {
         let buffer = recvPayload.buffer;
         let dataView = new DataView(buffer);
@@ -188,19 +223,15 @@
         URL.revokeObjectURL(url);
     }
 
-    // --- 初始化核心应用（全面切换至云端 CDN） ---
     function initApp() {
-        log("✅ 页面结构加载完毕，开始拉取云端引擎...");
+        log("✅ 页面结构加载完毕...");
         
         if (window._startupErrors && window._startupErrors.length > 0) {
             window._startupErrors.forEach(err => log('<span style="color:red">' + err + '</span>'));
         }
 
-        // 终极兜底补丁：防止某些浏览器的全局对象脱钩
-        window.Module = window.Module || {};
-        if (typeof window.ccall === 'function' && !window.Module.ccall) {
-            window.Module.ccall = window.ccall;
-        }
+        // --- 核心防崩溃注入 ---
+        injectEmscriptenPatches();
 
         if (typeof Quiet === 'undefined') {
             log('<span style="color:red">❌ Quiet.js 核心库未找到！请检查网络是否能够访问 jsDelivr CDN。</span>');
@@ -211,7 +242,6 @@
         btn.disabled = true;
         btn.innerText = "正在通过 CDN 下载环境配置...";
         
-        // 核心改动：底层编译文件也统一指向官方 CDN 仓库，彻底绕过本地文件缺陷
         const cdnPath = "https://cdn.jsdelivr.net/gh/quiet/quiet-js@master/";
 
         try {
@@ -239,7 +269,6 @@
         document.addEventListener("DOMContentLoaded", initApp);
     }
 
-    // --- 强力麦克风接管机制 ---
     async function startListening() {
         btn.disabled = true;
         btn.innerText = "1/2 正在请求设备权限...";
@@ -255,8 +284,11 @@
             });
             
             window._tempMicStream = stream;
-            
             log('<span style="color:green">✅ 2. 系统权限获取成功，设备麦克风已被激活。</span>');
+            
+            // --- 双重保险：启动前再次确认底层依赖 ---
+            injectEmscriptenPatches();
+
             btn.innerText = "2/2 正在启动声波解码引擎...";
             log("▶️ 3. 正在启动 Quiet.js 接收器...");
 
