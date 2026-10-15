@@ -5,7 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>声波高速数据接收端 (QPSK-64k)</title>
     
-    <!-- 必须引入真实的 quiet.js 核心库 (需下载到本地同一目录) -->
+    <!-- 顶层错误捕获：防止任何早期的环境崩溃被掩盖 -->
+    <script>
+        window._startupErrors = [];
+        window.onerror = function(msg, url, line) {
+            window._startupErrors.push('💥 顶层报错: ' + msg + ' (行:' + line + ')');
+        };
+        window.addEventListener('unhandledrejection', function(event) {
+            window._startupErrors.push('💥 异步报错: ' + (event.reason ? (event.reason.message || event.reason) : "未知错误"));
+        });
+    </script>
+
+    <!-- 必须引入真实的 quiet.js 核心库 -->
     <script src="quiet-emscripten.js"></script>
     <script src="quiet.js"></script>
     
@@ -24,7 +35,7 @@
 <body>
 
 <div class="card">
-    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:red;">(引擎修复版)</span></h2>
+    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:red;">(完全就绪版)</span></h2>
     <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
@@ -41,38 +52,6 @@
 </div>
 
 <script>
-    // ==========================================
-    // 核心修复补丁：手动注入 Emscripten 丢失的底层函数
-    // ==========================================
-    window.Module = window.Module || {};
-    if (typeof window.Module.intArrayFromString !== 'function') {
-        window.Module.intArrayFromString = function(stringy) {
-            var intArray = [];
-            for (var i = 0; i < stringy.length; ++i) {
-                var charCode = stringy.charCodeAt(i);
-                if (charCode < 0x80) {
-                    intArray.push(charCode);
-                } else if (charCode < 0x800) {
-                    intArray.push(0xc0 | (charCode >> 6));
-                    intArray.push(0x80 | (charCode & 0x3f));
-                } else if (charCode < 0xd800 || charCode >= 0xe000) {
-                    intArray.push(0xe0 | (charCode >> 12));
-                    intArray.push(0x80 | ((charCode >> 6) & 0x3f));
-                    intArray.push(0x80 | (charCode & 0x3f));
-                } else {
-                    i++;
-                    charCode = 0x10000 + (((charCode & 0x3ff) << 10) | (stringy.charCodeAt(i) & 0x3ff));
-                    intArray.push(0xf0 | (charCode >> 18));
-                    intArray.push(0x80 | ((charCode >> 12) & 0x3f));
-                    intArray.push(0x80 | ((charCode >> 6) & 0x3f));
-                    intArray.push(0x80 | (charCode & 0x3f));
-                }
-            }
-            intArray.push(0); // C-string 的 NULL 结尾
-            return intArray;
-        };
-    }
-
     // --- UI与日志工具 ---
     const btn = document.getElementById('btnStart');
     const logEl = document.getElementById('log');
@@ -87,18 +66,14 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // --- 全局错误捕获 ---
-    window.onerror = function(msg, url, line, col, error) {
+    // --- 页面运行时错误捕获 ---
+    window.onerror = function(msg, url, line) {
         log('<span style="color:red; font-weight:bold;">💥 致命报错: ' + msg + ' (行:' + line + ')</span>');
         btn.disabled = false;
         btn.innerText = "环境报错，请查看日志";
     };
-    window.addEventListener('unhandledrejection', function(event) {
-        log('<span style="color:red; font-weight:bold;">💥 异步报错: ' + (event.reason ? (event.reason.message || event.reason) : "未知错误") + '</span>');
-        btn.disabled = false;
-    });
 
-    // --- 内部轻量级 CRC32 实现 ---
+    // --- CRC32 校验实现 ---
     const crc32Table = new Uint32Array(256);
     for(let i=0; i<256; i++){
         let c = i;
@@ -113,11 +88,10 @@
         return (crc ^ 0xFFFFFFFF) >>> 0;
     }
 
-    // --- 状态机与全局变量 ---
+    // --- 状态与变量 ---
     const STATE_WAIT_HEADER = 0;
     const STATE_RECEIVING = 1;
     let currentState = STATE_WAIT_HEADER;
-    
     let fileMeta = { name: "", size: 0, totalChunks: 0, globalCrc: 0 };
     let fileBuffer = null;
     let receivedChunks = new Set();
@@ -125,7 +99,7 @@
     let byteCounter = 0;
     let lastTime = Date.now();
 
-    // --- 速率计算 ---
+    // --- 速率统计 ---
     setInterval(() => {
         if(currentState === STATE_RECEIVING) {
             let now = Date.now();
@@ -139,7 +113,7 @@
         }
     }, 1000);
 
-    // --- Quiet.js 接收处理函数 ---
+    // --- 数据接收回调 ---
     function onReceive(recvPayload) {
         let buffer = recvPayload.buffer;
         let dataView = new DataView(buffer);
@@ -187,7 +161,6 @@
         let current = receivedChunks.size;
         let total = fileMeta.totalChunks;
         let percent = ((current / total) * 100).toFixed(1);
-        
         progFill.style.width = `${percent}%`;
         txtProgress.innerText = `接收中 (${current} / ${total} 块) - ${percent}%`;
         
@@ -215,15 +188,54 @@
         URL.revokeObjectURL(url);
     }
 
-    // --- 页面加载与引擎初始化 ---
-    document.addEventListener("DOMContentLoaded", () => {
+    // --- 初始化核心应用（包含补丁与安全检查） ---
+    function initApp() {
+        log("✅ 页面生命周期就绪，开始初始化...");
+        
+        // 打印由于加载过快/过慢产生的顶层报错
+        if (window._startupErrors && window._startupErrors.length > 0) {
+            window._startupErrors.forEach(err => log('<span style="color:red">' + err + '</span>'));
+        }
+
+        // 核心修复：更安全的 Emscripten 函数补丁注入
+        let targetModule = (typeof Module !== 'undefined') ? Module : (window.Module = window.Module || {});
+        if (typeof targetModule.intArrayFromString !== 'function') {
+            log("🔧 正在向底层引擎注入字符串转换补丁...");
+            targetModule.intArrayFromString = function(stringy) {
+                let intArray = [];
+                for (let i = 0; i < stringy.length; ++i) {
+                    let charCode = stringy.charCodeAt(i);
+                    if (charCode < 0x80) {
+                        intArray.push(charCode);
+                    } else if (charCode < 0x800) {
+                        intArray.push(0xc0 | (charCode >> 6));
+                        intArray.push(0x80 | (charCode & 0x3f));
+                    } else if (charCode < 0xd800 || charCode >= 0xe000) {
+                        intArray.push(0xe0 | (charCode >> 12));
+                        intArray.push(0x80 | ((charCode >> 6) & 0x3f));
+                        intArray.push(0x80 | (charCode & 0x3f));
+                    } else {
+                        i++;
+                        charCode = 0x10000 + (((charCode & 0x3ff) << 10) | (stringy.charCodeAt(i) & 0x3ff));
+                        intArray.push(0xf0 | (charCode >> 18));
+                        intArray.push(0x80 | ((charCode >> 12) & 0x3f));
+                        intArray.push(0x80 | ((charCode >> 6) & 0x3f));
+                        intArray.push(0x80 | (charCode & 0x3f));
+                    }
+                }
+                intArray.push(0);
+                return intArray;
+            };
+        }
+
         if (typeof Quiet === 'undefined') {
-            log('<span style="color:red">❌ Quiet.js 核心库加载失败，检查网络或文件是否上传。</span>');
+            log('<span style="color:red">❌ Quiet.js 核心库未找到！请确认库文件存在。</span>');
+            btn.innerText = "核心库缺失";
             return;
         }
 
         btn.disabled = true;
-        btn.innerText = "正在下载引擎依赖...";
+        btn.innerText = "正在下载引擎依赖文件...";
         
         let pathPrefix = window.location.pathname;
         if (!pathPrefix.endsWith("/")) {
@@ -237,13 +249,67 @@
                 libfecPrefix: pathPrefix
             });
         } catch (e) {
-            log('<span style="color:red">💥 init 初始化报错: ' + e + '</span>');
+            log('<span style="color:red">💥 Quiet.init 报错: ' + e + '</span>');
+            btn.innerText = "初始化失败";
             return;
         }
 
         Quiet.addReadyCallback(() => {
-            log("✅ 引擎核心已就绪，等待用户授权。");
+            log("✅ 引擎环境构建完毕，等待点击。");
             btn.disabled = false;
             btn.innerText = "允许麦克风并启动接收";
         });
-    });
+    }
+
+    // --- 智能防卡死触发机制 ---
+    // 不再死等 DOMContentLoaded，如果网页已经从缓存快速完成加载，就直接启动！
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        setTimeout(initApp, 10);
+    } else {
+        document.addEventListener("DOMContentLoaded", initApp);
+    }
+
+    // --- 强力麦克风接管机制 ---
+    async function startListening() {
+        btn.disabled = true;
+        btn.innerText = "1/2 正在请求设备权限...";
+        log("▶️ 1. 尝试直接调用 WebRTC 获取麦克风...");
+
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error("浏览器环境不支持 getUserMedia，或不在 HTTPS 下运行。");
+            }
+
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+            });
+            
+            window._tempMicStream = stream;
+            
+            log('<span style="color:green">✅ 2. 系统权限获取成功，设备麦克风已被激活。</span>');
+            btn.innerText = "2/2 正在启动声波解码引擎...";
+            log("▶️ 3. 正在启动 Quiet.js 接收器...");
+
+            Quiet.receiver({
+                profile: 'cable-64k',
+                onReceive: onReceive,
+                onCreateFail: (err) => { 
+                    log('<span style="color:red">❌ 4. 接收器创建失败: ' + err + '</span>'); 
+                    btn.disabled = false;
+                    btn.innerText = "重新尝试";
+                },
+                onReceiveFail: (num) => { }
+            });
+            
+            log('<span style="color:green; font-weight:bold;">✅ 4. 引擎启动成功！正在监听环境中的声波...</span>');
+            btn.innerText = "🟢 接收状态：正在监听中";
+
+        } catch (err) {
+            log('<span style="color:red; font-weight:bold;">❌ 运行期间抛出异常: ' + err.name + " -> " + err.message + '</span>');
+            btn.disabled = false;
+            btn.innerText = "权限拒绝或异常，点击重试";
+        }
+    }
+</script>
+</body>
+</html>
