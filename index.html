@@ -6,7 +6,6 @@
     <title>声波高速数据接收端 (QPSK-64k)</title>
     
     <script>
-        // 1. 全局错误捕捉
         window._startupErrors = [];
         window.onerror = function(msg, url, line) {
             window._startupErrors.push('💥 顶层报错: ' + msg + ' (行:' + line + ')');
@@ -15,20 +14,21 @@
             window._startupErrors.push('💥 异步报错: ' + (event.reason ? (event.reason.message || event.reason) : "未知错误"));
         });
 
-        // 2. 拦截底层引擎寻址，强制指向官方 Demo 站点的二进制内存文件
+        // 强制将底层 WebAssembly/asm.js 的内存文件路径精准指向官方根目录
+        const CDN_PATH = "https://quiet.github.io/quiet-js/";
         window.Module = {
             locateFile: function(path) {
-                if (path.endsWith('.mem') || path.endsWith('.wasm')) {
-                    return "https://quiet.github.io/quiet-js/js/" + path;
+                if (path.endsWith('.mem') || path.endsWith('.wasm') || path.endsWith('.json')) {
+                    return CDN_PATH + path;
                 }
                 return path;
             }
         };
     </script>
 
-    <!-- 直接引用官方稳定版 Demo 站点上已经编译好的核心库 -->
-    <script src="https://quiet.github.io/quiet-js/js/quiet-emscripten.js"></script>
-    <script src="https://quiet.github.io/quiet-js/js/quiet.js"></script>
+    <!-- 修复点：去掉了错误的 /js/ 路径，直接指向官方根目录的纯净编译版 -->
+    <script src="https://quiet.github.io/quiet-js/quiet-emscripten.js"></script>
+    <script src="https://quiet.github.io/quiet-js/quiet.js"></script>
     
     <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
@@ -75,9 +75,6 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // ==========================================
-    // 强制方法注入：补充古董 WebAssembly 引擎丢失的底层组件
-    // ==========================================
     function injectEmscriptenPatches() {
         if (!window.Module) window.Module = {};
         
@@ -86,7 +83,6 @@
         }
 
         if (!window.Module.intArrayFromString) {
-            log("🔧 正在注入字符串转换核心补丁...");
             window.Module.intArrayFromString = function(stringy) {
                 var intArray = [];
                 for (var i = 0; i < stringy.length; ++i) {
@@ -245,11 +241,11 @@
         btn.innerText = "正在拉取核心环境配置...";
 
         try {
-            // 直接指向官方稳定版 Demo 的配置文件目录
+            // 依赖路径已精准修正为官方根目录
             Quiet.init({
-                profilesPrefix: "https://quiet.github.io/quiet-js/",
-                memoryInitializerPrefix: "https://quiet.github.io/quiet-js/js/",
-                libfecPrefix: "https://quiet.github.io/quiet-js/js/"
+                profilesPrefix: CDN_PATH,
+                memoryInitializerPrefix: CDN_PATH,
+                libfecPrefix: CDN_PATH
             });
         } catch (e) {
             log('<span style="color:red">💥 环境配置报错: ' + e + '</span>');
