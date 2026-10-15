@@ -6,6 +6,7 @@
     <title>声波高速数据接收端 (QPSK-64k)</title>
     
     <script>
+        // 1. 全局错误捕捉
         window._startupErrors = [];
         window.onerror = function(msg, url, line) {
             window._startupErrors.push('💥 顶层报错: ' + msg + ' (行:' + line + ')');
@@ -14,21 +15,18 @@
             window._startupErrors.push('💥 异步报错: ' + (event.reason ? (event.reason.message || event.reason) : "未知错误"));
         });
 
-        // 强制将底层 WebAssembly/asm.js 的内存文件路径精准指向官方根目录
-        const CDN_PATH = "https://quiet.github.io/quiet-js/";
+        // 2. 强制底层引擎寻址锁定：确保 .mem 和 .wasm 从稳定 CDN 读取，绝对不会报 404
+        const CDN_BASE = "https://cdn.jsdelivr.net/npm/quietjs@0.1.2/";
         window.Module = {
             locateFile: function(path) {
-                if (path.endsWith('.mem') || path.endsWith('.wasm') || path.endsWith('.json')) {
-                    return CDN_PATH + path;
-                }
-                return path;
+                return CDN_BASE + path;
             }
         };
     </script>
 
-    <!-- 修复点：去掉了错误的 /js/ 路径，直接指向官方根目录的纯净编译版 -->
-    <script src="https://quiet.github.io/quiet-js/quiet-emscripten.js"></script>
-    <script src="https://quiet.github.io/quiet-js/quiet.js"></script>
+    <!-- 引用稳定版 CDN 上的核心库 -->
+    <script src="https://cdn.jsdelivr.net/npm/quietjs@0.1.2/quiet-emscripten.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/quietjs@0.1.2/quiet.js"></script>
     
     <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
@@ -45,7 +43,7 @@
 <body>
 
 <div class="card">
-    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:green;">(官方镜像终极版)</span></h2>
+    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:green;">(NPM稳定版)</span></h2>
     <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
@@ -75,13 +73,12 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
+    // 手动补齐 Emscripten 可能丢失的底层函数
     function injectEmscriptenPatches() {
         if (!window.Module) window.Module = {};
-        
         if (typeof window.ccall === 'function' && !window.Module.ccall) {
             window.Module.ccall = window.ccall;
         }
-
         if (!window.Module.intArrayFromString) {
             window.Module.intArrayFromString = function(stringy) {
                 var intArray = [];
@@ -232,7 +229,7 @@
         injectEmscriptenPatches();
 
         if (typeof Quiet === 'undefined') {
-            log('<span style="color:red">❌ 核心库未找到！请检查网络是否能访问 quiet.github.io。</span>');
+            log('<span style="color:red">❌ 核心库未找到！请检查网络是否能访问 CDN。</span>');
             btn.innerText = "网络依赖加载失败";
             return;
         }
@@ -241,11 +238,10 @@
         btn.innerText = "正在拉取核心环境配置...";
 
         try {
-            // 依赖路径已精准修正为官方根目录
             Quiet.init({
-                profilesPrefix: CDN_PATH,
-                memoryInitializerPrefix: CDN_PATH,
-                libfecPrefix: CDN_PATH
+                profilesPrefix: CDN_BASE,
+                memoryInitializerPrefix: CDN_BASE,
+                libfecPrefix: CDN_BASE
             });
         } catch (e) {
             log('<span style="color:red">💥 环境配置报错: ' + e + '</span>');
