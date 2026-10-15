@@ -15,12 +15,13 @@
             window._startupErrors.push('💥 异步报错: ' + (event.reason ? (event.reason.message || event.reason) : "未知错误"));
         });
 
-        // 2. 终极补丁：必须在加载官方库之前定义 Module，强制拦截 .mem 文件的跨域寻址！
-        const CDN_PATH = "https://cdn.jsdelivr.net/gh/quiet/quiet-js@master/";
+        // 2. 切换为正式发布的 NPM 稳定版 CDN，避开官方 GitHub 主分支的损坏代码
+        const CDN_PATH = "https://cdn.jsdelivr.net/npm/quietjs/";
+        
         window.Module = {
             locateFile: function(path) {
-                // 强制所有二进制依赖文件从 CDN 原厂加载，杜绝本地 404 导致的引擎崩溃
-                if (path.endsWith('.mem') || path.endsWith('.wasm')) {
+                // 强制所有二进制依赖文件从 NPM 稳定版 CDN 加载
+                if (path.endsWith('.mem') || path.endsWith('.wasm') || path.endsWith('.json')) {
                     return CDN_PATH + path;
                 }
                 return path;
@@ -28,9 +29,9 @@
         };
     </script>
 
-    <!-- 引用官方 CDN 文件 -->
-    <script src="https://cdn.jsdelivr.net/gh/quiet/quiet-js@master/quiet-emscripten.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/quiet/quiet-js@master/quiet.js"></script>
+    <!-- 引用 NPM 稳定版文件 -->
+    <script src="https://cdn.jsdelivr.net/npm/quietjs/quiet-emscripten.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/quietjs/quiet.js"></script>
     
     <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
@@ -47,7 +48,7 @@
 <body>
 
 <div class="card">
-    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:green;">(寻址修复定稿版)</span></h2>
+    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:green;">(NPM稳定终极版)</span></h2>
     <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
@@ -308,19 +309,18 @@
             btn.innerText = "🟢 接收状态：正在监听中";
 
         } catch (err) {
-            // 防御式报错解析：精确解析出 Emscripten 抛出的纯字符串错误
             let errMsg = "未知异常";
             if (err instanceof Error) {
                 errMsg = err.name + " -> " + err.message;
             } else if (typeof err === 'string') {
-                errMsg = "底层崩溃: " + err; // 现在终于能看清字符串里的真面目了
+                errMsg = "底层崩溃: " + err;
             } else {
                 try { errMsg = JSON.stringify(err); } catch(e) { errMsg = String(err); }
             }
             
             log('<span style="color:red; font-weight:bold;">❌ 运行期间抛出异常: ' + errMsg + '</span>');
             btn.disabled = false;
-            btn.innerText = "权限拒绝或异常，点击重试";
+            btn.innerText = "环境异常，点击重试";
         }
     }
 </script>
