@@ -24,7 +24,7 @@
 <body>
 
 <div class="card">
-    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:red;">(防拦截修复版)</span></h2>
+    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:red;">(引擎修复版)</span></h2>
     <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
@@ -41,6 +41,38 @@
 </div>
 
 <script>
+    // ==========================================
+    // 核心修复补丁：手动注入 Emscripten 丢失的底层函数
+    // ==========================================
+    window.Module = window.Module || {};
+    if (typeof window.Module.intArrayFromString !== 'function') {
+        window.Module.intArrayFromString = function(stringy) {
+            var intArray = [];
+            for (var i = 0; i < stringy.length; ++i) {
+                var charCode = stringy.charCodeAt(i);
+                if (charCode < 0x80) {
+                    intArray.push(charCode);
+                } else if (charCode < 0x800) {
+                    intArray.push(0xc0 | (charCode >> 6));
+                    intArray.push(0x80 | (charCode & 0x3f));
+                } else if (charCode < 0xd800 || charCode >= 0xe000) {
+                    intArray.push(0xe0 | (charCode >> 12));
+                    intArray.push(0x80 | ((charCode >> 6) & 0x3f));
+                    intArray.push(0x80 | (charCode & 0x3f));
+                } else {
+                    i++;
+                    charCode = 0x10000 + (((charCode & 0x3ff) << 10) | (stringy.charCodeAt(i) & 0x3ff));
+                    intArray.push(0xf0 | (charCode >> 18));
+                    intArray.push(0x80 | ((charCode >> 12) & 0x3f));
+                    intArray.push(0x80 | ((charCode >> 6) & 0x3f));
+                    intArray.push(0x80 | (charCode & 0x3f));
+                }
+            }
+            intArray.push(0); // C-string 的 NULL 结尾
+            return intArray;
+        };
+    }
+
     // --- UI与日志工具 ---
     const btn = document.getElementById('btnStart');
     const logEl = document.getElementById('log');
@@ -55,7 +87,7 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // --- 终极防御：全局错误捕获，直接将报错显示在手机屏幕上 ---
+    // --- 全局错误捕获 ---
     window.onerror = function(msg, url, line, col, error) {
         log('<span style="color:red; font-weight:bold;">💥 致命报错: ' + msg + ' (行:' + line + ')</span>');
         btn.disabled = false;
@@ -193,7 +225,6 @@
         btn.disabled = true;
         btn.innerText = "正在下载引擎依赖...";
         
-        // 动态获取安全路径前缀，防止 GitHub Pages 二级目录产生 404
         let pathPrefix = window.location.pathname;
         if (!pathPrefix.endsWith("/")) {
             pathPrefix = pathPrefix.substring(0, pathPrefix.lastIndexOf("/") + 1);
@@ -216,59 +247,3 @@
             btn.innerText = "允许麦克风并启动接收";
         });
     });
-
-    // --- 强力麦克风接管机制 ---
-    async function startListening() {
-        btn.disabled = true;
-        btn.innerText = "1/2 正在强制请求权限...";
-        log("▶️ 1. 尝试直接调用底层 WebRTC API 获取麦克风...");
-
-        try {
-            // 第 1 步：强制使用现代浏览器规范直接请求麦克风
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                throw new Error("当前浏览器环境不支持 getUserMedia，请确保在 HTTPS 下运行！");
-            }
-
-            // 这个请求如果成功，手机必定会弹窗并亮起绿点
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: false,
-                    noiseSuppression: false,
-                    autoGainControl: false
-                }
-            });
-            
-            // 将授权的音频流保存在全局对象中，防止被垃圾回收导致后续 Quiet 拿不到权限
-            window._tempMicStream = stream;
-            
-            // 已修复单双引号嵌套错误
-            log('<span style="color:green">✅ 2. 浏览器麦克风权限已被系统批准！系统绿灯应亮起。</span>');
-            btn.innerText = "2/2 正在启动声波引擎...";
-            log("▶️ 3. 正在启动 Quiet.js 接收器...");
-
-            // 第 2 步：此时权限已经到手，通知引擎开始监听
-            Quiet.receiver({
-                profile: 'cable-64k',
-                onReceive: onReceive,
-                onCreateFail: (err) => { 
-                    log('<span style="color:red">❌ 4. Quiet 引擎连接麦克风失败: ' + err + '</span>'); 
-                    btn.disabled = false;
-                    btn.innerText = "重新尝试";
-                },
-                onReceiveFail: (num) => { /* 软解失败静默处理，依赖CRC判断 */ }
-            });
-            
-            log("✅ 4. 引擎启动指令执行完毕，进入全功率监听模式。");
-            btn.innerText = "🟢 接收状态：正在监听中...";
-
-        } catch (err) {
-            // 如果连第一步都过不去，直接把最底层的报错原因打在屏幕上
-            log('<span style="color:red; font-weight:bold;">❌ 麦克风请求被系统拦截: ' + err.name + " -> " + err.message + '</span>');
-            alert("无法调起麦克风！\n\n错误代码: " + err.name + "\n\n请检查：\n1. 手机设置中是否禁止了浏览器的麦克风权限\n2. 请勿在微信/QQ/百度等 APP 内置浏览器中打开");
-            btn.disabled = false;
-            btn.innerText = "重新尝试";
-        }
-    }
-</script>
-</body>
-</html>
