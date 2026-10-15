@@ -17,14 +17,14 @@
         .stats { display: flex; justify-content: space-between; margin-top: 20px; font-size: 14px; color: #666; }
         .progress-bar { height: 10px; background: #e9ecef; border-radius: 5px; margin-top: 15px; overflow: hidden; }
         .progress-fill { height: 100%; background: #28a745; width: 0%; transition: width 0.2s; }
-        #log { margin-top: 15px; font-size: 12px; color: #999; max-height: 100px; overflow-y: auto; }
+        #log { margin-top: 15px; font-size: 12px; color: #666; max-height: 150px; overflow-y: auto; background: #fafafa; padding: 10px; border-radius: 6px; border: 1px solid #eee; }
+        .log-time { color: #999; margin-right: 5px; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2 style="margin-top: 0;">声波接收终端</h2>
-    <!-- 按钮初始设置为禁用状态，等待引擎加载 -->
+    <h2 style="margin-top: 0;">声波接收终端 <span style="font-size:12px;color:red;">(防拦截修复版)</span></h2>
     <button id="btnStart" onclick="startListening()" disabled>正在等待页面加载...</button>
     
     <div class="stats">
@@ -41,6 +41,31 @@
 </div>
 
 <script>
+    // --- UI与日志工具 ---
+    const btn = document.getElementById('btnStart');
+    const logEl = document.getElementById('log');
+    const txtSpeed = document.getElementById('txtSpeed');
+    const txtErrors = document.getElementById('txtErrors');
+    const txtProgress = document.getElementById('txtProgress');
+    const progFill = document.getElementById('progFill');
+
+    function log(msg) {
+        const timeStr = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        logEl.innerHTML += `<div><span class="log-time">${timeStr}</span> ${msg}</div>`;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // --- 终极防御：全局错误捕获，直接将报错显示在手机屏幕上 ---
+    window.onerror = function(msg, url, line, col, error) {
+        log('<span style="color:red; font-weight:bold;">💥 致命报错: ' + msg + ' (行:' + line + ')</span>');
+        btn.disabled = false;
+        btn.innerText = "环境报错，请查看日志";
+    };
+    window.addEventListener('unhandledrejection', function(event) {
+        log('<span style="color:red; font-weight:bold;">💥 异步报错: ' + (event.reason ? (event.reason.message || event.reason) : "未知错误") + '</span>');
+        btn.disabled = false;
+    });
+
     // --- 内部轻量级 CRC32 实现 ---
     const crc32Table = new Uint32Array(256);
     for(let i=0; i<256; i++){
@@ -68,26 +93,15 @@
     let byteCounter = 0;
     let lastTime = Date.now();
 
-    // UI 元素
-    const btn = document.getElementById('btnStart');
-    const logEl = document.getElementById('log');
-    const txtSpeed = document.getElementById('txtSpeed');
-    const txtErrors = document.getElementById('txtErrors');
-    const txtProgress = document.getElementById('txtProgress');
-    const progFill = document.getElementById('progFill');
-
-    function log(msg) {
-        logEl.innerHTML += `<div>${new Date().toLocaleTimeString()} - ${msg}</div>`;
-        logEl.scrollTop = logEl.scrollHeight;
-    }
-
     // --- 速率计算 ---
     setInterval(() => {
         if(currentState === STATE_RECEIVING) {
             let now = Date.now();
             let dt = (now - lastTime) / 1000;
-            let kbps = ((byteCounter * 8) / 1024 / dt).toFixed(1);
-            txtSpeed.innerText = `速率: ${kbps} kbps`;
+            if (dt > 0) {
+                let kbps = ((byteCounter * 8) / 1024 / dt).toFixed(1);
+                txtSpeed.innerText = `速率: ${kbps} kbps`;
+            }
             byteCounter = 0;
             lastTime = now;
         }
@@ -111,7 +125,7 @@
                 lastTime = Date.now();
                 byteCounter = 0;
                 
-                log(`[元数据] ${fileMeta.name}, 大小:${fileMeta.size}B, 块数:${fileMeta.totalChunks}`);
+                log(`<span style="color:blue">📥 发现新文件: ${fileMeta.name} (${(fileMeta.size/1024).toFixed(1)} KB)</span>`);
             }
         } 
         else if (currentState === STATE_RECEIVING) {
@@ -143,16 +157,16 @@
         let percent = ((current / total) * 100).toFixed(1);
         
         progFill.style.width = `${percent}%`;
-        txtProgress.innerText = `接收中 (${current} / ${total} KB) - ${percent}%`;
+        txtProgress.innerText = `接收中 (${current} / ${total} 块) - ${percent}%`;
         
         if (current === total) {
             currentState = STATE_WAIT_HEADER;
-            log('接收完毕，执行全局校验...');
+            log('✅ 所有数据块接收完毕，执行全局校验...');
             if (calcCrc32(fileBuffer) === fileMeta.globalCrc) {
-                log('✅ 全局校验通过，触发下载！');
+                log('<span style="color:green; font-weight:bold;">🎉 全局校验通过，触发下载！</span>');
                 triggerDownload();
             } else {
-                log('❌ 校验失败：文件损坏。');
+                log('<span style="color:red; font-weight:bold;">❌ 校验失败：文件存在损坏。</span>');
             }
         }
     }
@@ -169,56 +183,90 @@
         URL.revokeObjectURL(url);
     }
 
-    // --- 1. 页面一加载，立刻在后台初始化引擎，但不调起麦克风 ---
+    // --- 页面加载与引擎初始化 ---
     document.addEventListener("DOMContentLoaded", () => {
         if (typeof Quiet === 'undefined') {
-            log("❌ Quiet.js 库未加载，请确保 4 个核心文件都已上传。");
+            log('<span style="color:red">❌ Quiet.js 核心库加载失败，检查网络或文件是否上传。</span>');
             return;
         }
 
         btn.disabled = true;
-        btn.innerText = "正在下载引擎依赖(约1MB)...";
+        btn.innerText = "正在下载引擎依赖...";
         
+        // 动态获取安全路径前缀，防止 GitHub Pages 二级目录产生 404
+        let pathPrefix = window.location.pathname;
+        if (!pathPrefix.endsWith("/")) {
+            pathPrefix = pathPrefix.substring(0, pathPrefix.lastIndexOf("/") + 1);
+        }
+
         try {
             Quiet.init({
-                profilesPrefix: "./",
-                memoryInitializerPrefix: "./",
-                libfecPrefix: "./"
+                profilesPrefix: pathPrefix,
+                memoryInitializerPrefix: pathPrefix,
+                libfecPrefix: pathPrefix
             });
         } catch (e) {
-            log("引擎初始化报错: " + e);
-            btn.innerText = "初始化失败";
+            log('<span style="color:red">💥 init 初始化报错: ' + e + '</span>');
             return;
         }
 
         Quiet.addReadyCallback(() => {
-            log("引擎加载完毕，等待用户授权。");
-            // 依赖下载并初始化完成后，才将按钮变为可点击状态
+            log("✅ 引擎核心已就绪，等待用户授权。");
             btn.disabled = false;
             btn.innerText = "允许麦克风并启动接收";
         });
     });
 
-    // --- 2. 用户点击按钮时，没有任何延迟，直接同步请求麦克风 ---
-    function startListening() {
+    // --- 强力麦克风接管机制 ---
+    async function startListening() {
         btn.disabled = true;
-        btn.innerText = "正在请求麦克风权限...";
-        log("正在调起系统麦克风...");
-        
-        Quiet.receiver({
-            profile: 'cable-64k',
-            onReceive: onReceive,
-            onCreateFail: (err) => { 
-                log('麦克风被拒绝或失败: ' + err); 
-                alert("麦克风启动失败！\n原因可能是：\n1. 浏览器设置中禁用了此网页的权限\n2. 在微信/QQ等内置浏览器中打开（请改用手机自带 Safari/Chrome 打开）");
-                btn.disabled = false;
-                btn.innerText = "重新尝试";
-            },
-            onReceiveFail: (num) => { }
-        });
-        
-        // 执行到这里说明麦克风 API 已成功发起请求
-        btn.innerText = "接收状态：监听中 (绿点常亮)";
+        btn.innerText = "1/2 正在强制请求权限...";
+        log("▶️ 1. 尝试直接调用底层 WebRTC API 获取麦克风...");
+
+        try {
+            // 第 1 步：强制使用现代浏览器规范直接请求麦克风
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error("当前浏览器环境不支持 getUserMedia，请确保在 HTTPS 下运行！");
+            }
+
+            // 这个请求如果成功，手机必定会弹窗并亮起绿点
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
+                }
+            });
+            
+            // 将授权的音频流保存在全局对象中，防止被垃圾回收导致后续 Quiet 拿不到权限
+            window._tempMicStream = stream;
+            
+            log("<span style="color:green">✅ 2. 浏览器麦克风权限已被系统批准！系统绿灯应亮起。</span>");
+            btn.innerText = "2/2 正在启动声波引擎...";
+            log("▶️ 3. 正在启动 Quiet.js 接收器...");
+
+            // 第 2 步：此时权限已经到手，通知引擎开始监听
+            Quiet.receiver({
+                profile: 'cable-64k',
+                onReceive: onReceive,
+                onCreateFail: (err) => { 
+                    log('<span style="color:red">❌ 4. Quiet 引擎连接麦克风失败: ' + err + '</span>'); 
+                    btn.disabled = false;
+                    btn.innerText = "重新尝试";
+                },
+                onReceiveFail: (num) => { /* 软解失败静默处理，依赖CRC判断 */ }
+            });
+            
+            log("✅ 4. 引擎启动指令执行完毕，进入全功率监听模式。");
+            btn.innerText = "🟢 接收状态：正在监听中...";
+
+        } catch (err) {
+            // 如果连第一步都过不去，直接把最底层的报错原因打在屏幕上
+            log('<span style="color:red; font-weight:bold;">❌ 麦克风请求被系统拦截: ' + err.name + " -> " + err.message + '</span>');
+            alert("无法调起麦克风！\n\n错误代码: " + err.name + "\n\n请检查：\n1. 手机设置中是否禁止了浏览器的麦克风权限\n2. 请勿在微信/QQ/百度等 APP 内置浏览器中打开");
+            btn.disabled = false;
+            btn.innerText = "重新尝试";
+        }
     }
 </script>
 </body>
